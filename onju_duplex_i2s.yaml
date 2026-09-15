@@ -1,31 +1,30 @@
-# NOTE: Works quite good, might need further tuning of gain and attenuation values
-
 substitutions:
-  name: "onju-voice"
-  friendly_name: "Onju Voice Common Code"
-  project_version: "1.2.0"
-  device_description: "Common code for the onju voice, to be included in all onju voice devices"
-  wakeup_sound_url: "http://192.168.0.202:8123/local/wakeup.flac" # New Notification #7 by UNIVERSFIELD https://freesound.org/people/UNIVERSFIELD/sounds/736267/
-  error_sound_url: "http://192.168.0.202:8123/local/error.flac" # Error #8 by UNIVERSFIELD https://freesound.org/people/UNIVERSFIELD/sounds/734442/
-  timer_finished_sound_url: "http://192.168.0.202:8123/local/timer_finished.flac" # New Notification #6 by UNIVERSFIELD https://freesound.org/people/UNIVERSFIELD/sounds/734445/
-  mute_sound_url: "http://192.168.0.202:8123/local/mute.flac" # https://github.com/esphome/home-assistant-voice-pe/blob/dev/sounds/jack_disconnected.flac
-  unmute_sound_url: "http://192.168.0.202:8123/local/unmute.flac" # https://github.com/esphome/home-assistant-voice-pe/blob/dev/sounds/jack_connected.flac
-  knock_sound_url: "http://192.168.0.202:8123/local/knock.flac" # https://freesound.org/people/UberBosser/sounds/421585/
-  click_sound_url: "http://192.168.0.202:8123/local/tongue-click.flac" # https://freesound.org/people/MichellePamelaLyons/sounds/135515/
-  alarm_sound_url: "http://192.168.0.202:8123/local/alarm.flac" # https://freesound.org/people/JW_Audio/sounds/828581/
-  # NOTE for sounds: all sound were converted to flac, mono, 48khz (match the speaker sample_rate!), highest compression -> so they are as small as possible
+  name: my-onju-voice
+  friendly_name: Onju
+  #TODO update sounds, must be 16kbps or lower
+  alarm_sound_url: "beep.flac"
+  wakeup_sound_url: "beep.flac"
+  error_sound_url: "beep.flac"
+  timer_finished_sound_url: "beep.flac"
+  mute_sound_url: "beep.flac"
+  unmute_sound_url: "beep.flac"
+  knock_sound_url: "beep.flac"
+  click_sound_url: "beep.flac"
 
 external_components:
-  - source: github://n-IA-hane/esphome-intercom@main
-    components: [esp_audio_stack, esp_aec, audio_processor, intercom_api]
+  - source: github://n-IA-hane/esphome-audio-stack@main
+    components: [esp_audio_stack, esp_aec, esp_afe] # <-- audio_processor replaced by esp_afe
     refresh: 0s
 
+  # Pull the new SIP-based VoIP client engine
+  - source: github://n-IA-hane/esphome-voip-stack@main
+    components: [voip_stack]
+    refresh: 0s
 esphome:
-  name: "${name}"
-  friendly_name: "${friendly_name}"
-  comment: "${device_description}"
+  name: ${name}
+  name_add_mac_suffix: false
+  friendly_name: ${friendly_name}
   min_version: 2026.5.0
-  name_add_mac_suffix: true
   project:
     name: rmeissn.onju-voice-esphome
     version: "${project_version}"
@@ -107,20 +106,19 @@ logger:
   # logs:
   #  sensor: WARN
 
-wifi:
-  ssid: to_be_overwritten
-
-captive_portal:
 
 network:
   enable_ipv6: true
 
 api:
-  services:
-    - service: start_va
+  encryption:
+    key: !secret ha_key
+
+  actions:
+    - action: start_va
       then:
         - voice_assistant.start
-    - service: stop_va
+    - action: stop_va
       then:
         - voice_assistant.stop
 
@@ -292,6 +290,7 @@ speaker:
     id: mixer_speaker_id
     output_speaker: onju_out
     num_channels: 1
+    bits_per_sample: "16"
     # task_stack_in_psram: true
     source_speakers:
       - id: announcement_spk_mixer_input
@@ -334,7 +333,7 @@ microphone:
 
 media_player:
   - platform: speaker
-    name: "Media Player"
+    name: "Onju Player"
     id: nabu
     volume_increment: 0.05
     volume_min: 0
@@ -795,7 +794,7 @@ light:
     pin: GPIO11
     chipset: SK6812
     num_leds: 6
-    rgb_order: grb
+    channel_colors: GRB
     default_transition_length: 0s
     gamma_correct: 2.8
   - platform: partition
@@ -1294,3 +1293,14 @@ switch:
       - lambda: id(internal_flicker) = true;
       - lambda: id(led_state) = "idle";
       - script.execute: controle_leds
+
+
+
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+ota:
+  - platform: esphome
+    password: !secret onju_voice__ota_password
