@@ -1,6 +1,7 @@
 substitutions:
   name: my-onju-voice
   friendly_name: Onju
+  project_version: "1.2.1"
   #TODO update sounds, must be 16kbps or lower
   alarm_sound_url: "beep.flac"
   wakeup_sound_url: "beep.flac"
@@ -72,26 +73,38 @@ esp32:
     type: esp-idf
     version: recommended
     sdkconfig_options:
-      CONFIG_ESP32S3_DATA_CACHE_64KB: "y"
-      CONFIG_ESP32S3_DATA_CACHE_LINE_64B: "y"
-      CONFIG_ESP32S3_INSTRUCTION_CACHE_32KB: "y"
-
-      # Moves instructions and read only data from flash into PSRAM on boot.
-      # Both enabled allows instructions to execute while a flash operation is in progress without needing to be placed in IRAM.
-      # Considerably speeds up mWW at the cost of using more PSRAM.
+      
       CONFIG_SPIRAM_RODATA: "y"
       CONFIG_SPIRAM_FETCH_INSTRUCTIONS: "y"
 
+      CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL: "4096"
+
+      CONFIG_ESP32S3_DATA_CACHE_32KB: "y"
+      CONFIG_ESP32S3_DATA_CACHE_64KB: "n"
+      CONFIG_ESP32S3_INSTRUCTION_CACHE_16KB: "y"
+      CONFIG_ESP32S3_INSTRUCTION_CACHE_32KB: "n"
+      CONFIG_ESP32S3_DATA_CACHE_LINE_64B: "y"
+  
+      CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY: "y"
+      CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_AND_LWIP_STACKS_IN_EXTERNAL_RAM: "y"
+      
+      # KEEP WI-FI BUFFER SIZES LEAN
+      CONFIG_ESP32_WIFI_STATIC_RX_BUFFER_NUM: "4"
+      CONFIG_ESP32_WIFI_DYNAMIC_RX_BUFFER_NUM: "12"
+      CONFIG_ESP32_WIFI_DYNAMIC_TX_BUFFER: "y"
+      CONFIG_ESP32_WIFI_DYNAMIC_TX_BUFFER_NUM: "12"
+      CONFIG_ESP32_WIFI_AMPDU_TX_ENABLED: "n"
+      CONFIG_ESP32_WIFI_AMPDU_RX_ENABLED: "n"
+      CONFIG_ESP_WIFI_IRAM_OPT: "n"
+      CONFIG_FREERTOS_PLACE_FUNCTIONS_INTO_FLASH: "y"
+  
+      # BLUETOOTH & TLS SECURITY ROUTED TO PSRAM
       CONFIG_BT_ALLOCATION_FROM_SPIRAM_FIRST: "y"
       CONFIG_BT_BLE_DYNAMIC_ENV_MEMORY: "y"
-
       CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC: "y"
-      #CONFIG_MBEDTLS_SSL_PROTO_TLS1_3: "y" # TLS1.3 support isn't enabled by default in IDF 5.1.5
       CONFIG_MBEDTLS_DYNAMIC_BUFFER: "y"
       CONFIG_MBEDTLS_SSL_IN_CONTENT_LEN: "16384"
-      # Keep AES in hardware for HTTPS media/TTS worst-case testing. The AFE
-      # bridge buffers below live in PSRAM to preserve contiguous DMA heap.
-      CONFIG_MBEDTLS_HARDWARE_AES: "y"
+
 
 psram:
   mode: octal
@@ -101,7 +114,7 @@ psram:
 # Enable logging
 logger:
   # level: debug
-  baud_rate: 0
+  baud_rate: 115200
   # initial_level: debug
   # logs:
   #  sensor: WARN
@@ -112,7 +125,7 @@ network:
 
 api:
   encryption:
-    key: !secret ha_key
+    key: !sercret encrypt_key
 
   actions:
     - action: start_va
@@ -180,7 +193,7 @@ micro_wake_word: # requires 16khz input currently
   microphone:
     microphone: i2s_mics # mww_microphone
     channels: 0
-    gain_factor: 32 # TODO find optimal value, probably 8 to 16 if speaker is recorded, 32 to 64 if no speaker is active (or very quiete)
+    gain_factor: 8 # TODO find optimal value, probably 8 to 16 if speaker is recorded, 32 to 64 if no speaker is active (or very quiete)
   models:
     - model: https://github.com/kahrendt/microWakeWord/releases/download/okay_nabu_20241226.3/okay_nabu.json
       id: okay_nabu
@@ -268,15 +281,33 @@ esp_audio_stack:
   slot_bit_width: 32 # SPH0645 needs 32-bit I2S frames
   correct_dc_offset: true # removes DC bias from SPH0645 MEMS mics
   mic_channel: right # which stereo slot carries the mic
+  rx_slot_mode: stereo
   # num_channels: 2 # stereo capture — see note below about SNR
   # NOTE stereo destroys signal-noise-ratio (SNR) down to 1-2db. Use right or left to get a better SNR of ~16db (in my tests), TODO: retest with this new dupex implementation
   buffers_in_psram: true # Required for sr_low_cost (512-sample frames)
-  
+  audio_task_stack_in_psram: true
+  aec_reference_buffer_ms: 60
+  telemetry: true
+  telemetry_log_interval_frames: 128
+  on_mic_start:
+    then:
+      - logger.log: "MIC PATH: started"
+  on_mic_idle:
+    then:
+      - logger.log: "MIC PATH: STOPPED"
+  on_speaker_start:
+    then:
+      - logger.log: "SPEAKER PATH: started"
+  on_speaker_idle:
+    then:
+      - logger.log: "SPEAKER PATH: stopped"
+
 esp_aec:
   id: aec_processor
   sample_rate: 16000 # AEC is always at 16kHz (= output_sample_rate)
-  mode: sr_low_cost
-  filter_length: 4 # 64ms tail — sufficient for integrated codec path
+  mode: sr_low_cost #sr_high_perf
+  filter_length: 8 # 64ms tail — sufficient for integrated codec path
+  
 
 speaker:
   # Hardware speaker output
@@ -362,7 +393,7 @@ media_player:
         file: "${timer_finished_sound_url}"
     on_state:
       then:
-        - lambda: |-
+        - lambda: |
             static float old_volume = -1;
             float new_volume = id(nabu).volume;
             if(abs(new_volume-old_volume) > 0.0001) {
@@ -438,6 +469,8 @@ voice_assistant: # need to use a 16khz due to mww
   media_player: nabu
   micro_wake_word: mww
   use_wake_word: false
+  
+
   # For the following three options: speculative tuning based on input audio, as I can't get the resulting file to analyse
   noise_suppression_level: 2
   auto_gain: 10 dbfs
@@ -446,7 +479,7 @@ voice_assistant: # need to use a 16khz due to mww
     - mixer_speaker.apply_ducking: # useful if music is started in the background
         id: media_spk_mixer_input
         decibel_reduction: 30  # Number of dB quieter; higher implies more quiet, 0 implies full volume
-        duration: 0.0s         # The duration of the transition (default is no transition) -> duck now
+        duration: 0.5s         # The duration of the transition (default is no transition) -> duck now
   on_listening:
     - lambda: id(led_state) = "listening";
     - script.execute: controle_leds
@@ -479,8 +512,8 @@ voice_assistant: # need to use a 16khz due to mww
           and:
             - switch.is_on: use_wake_word
             - switch.is_off: master_mute_switch
-            - not:
-                media_player.is_playing:
+            #- not:
+            #    media_player.is_playing:
         then:
           - micro_wake_word.start:
   on_client_connected:
@@ -720,6 +753,19 @@ binary_sensor:
   
   - platform: gpio
     id: hardware_mute_switch
+    #TODO:
+    #on_press:
+      #- microphone.mute:
+        #id: i2s_mics
+      #- if:
+     #   ...
+        #- script.execute: turn_off_wake_word
+    #on_release:
+      #- microphone.unmute:
+        #id: i2s_mics
+      #...
+        #- script.execute: turn_on_wake_word
+    # END TODO
     internal: true
     pin:
       number: GPIO38
@@ -1194,6 +1240,10 @@ switch:
     restore_mode: RESTORE_DEFAULT_ON
     on_turn_on:
       - script.execute: turn_on_wake_word
+      - mixer_speaker.apply_ducking:
+          id: media_spk_mixer_input
+          decibel_reduction: 30
+          duration: 0.5s
     on_turn_off:
       - script.execute: turn_off_wake_word
   - platform: template
